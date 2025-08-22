@@ -1,5 +1,6 @@
 import {Defer} from '@webex/common';
 
+import {isIP} from 'is-ip';
 import LoggerProxy from '../common/logs/logger-proxy';
 import {convertStunUrlToTurn, convertStunUrlToTurnTls} from './util';
 import EventsScope from '../common/events/events-scope';
@@ -13,9 +14,7 @@ import {
 } from '../constants';
 import {ClusterReachabilityResult, NatType, SubnetDetails, ClusterNode} from './reachability.types';
 
-async function checkIP(ip: string) {
-  const {isIP} = await import('is-ip');
-
+function checkIP(ip: string) {
   return isIP(ip);
 }
 
