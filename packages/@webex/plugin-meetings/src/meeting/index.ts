@@ -62,6 +62,7 @@ import {
 } from '../common/errors/webex-errors';
 
 import LoggerProxy from '../common/logs/logger-proxy';
+import StaticConfig from '../common/config';
 import EventsUtil from '../common/events/util';
 import Trigger from '../common/events/trigger-proxy';
 import Roap, {type TurnDiscoveryResult, type TurnDiscoverySkipReason} from '../roap/index';
@@ -174,6 +175,11 @@ import {Invitee} from './type';
 
 // default callback so we don't call an undefined function, but in practice it should never be used
 const DEFAULT_ICE_PHASE_CALLBACK = () => 'JOIN_MEETING_FINAL';
+
+const CAMERA_RESOLUTION_BITS_PER_PIXEL = 0.1;
+const CAMERA_RESOLUTION_MAX_BPS = 5_000_000;
+const SHARE_RESOLUTION_BITS_PER_PIXEL = 0.08;
+const SHARE_RESOLUTION_MAX_BPS = 6_000_000;
 
 const logRequest = (request: any, {logText = ''}) => {
   LoggerProxy.logger.info(`${logText} - sending request`);
@@ -1525,9 +1531,23 @@ export default class Meeting extends StatelessWebexPlugin {
     // RoapMediaConnection has to use raw MediaStreamTracks in its API until
     // the Calling SDK also moves to using webrtc-core streams
     this.localOutputTrackChangeHandler = () => {
-      if (!this.isMultistream) {
-        this.updateTranscodedMediaConnection();
+      if (this.isMultistream) {
+        return;
       }
+
+      this.updateTranscodedMediaConnection()
+        .then(() =>
+          Promise.all([
+            this.applyResolutionBasedBitrate(MediaType.VideoMain),
+            this.applyResolutionBasedBitrate(MediaType.VideoSlides),
+          ])
+        )
+        .catch((error) => {
+          LoggerProxy.logger.error(
+            'Meeting:index#localOutputTrackChangeHandler --> failed to refresh media connection',
+            error
+          );
+        });
     };
 
     /**
@@ -4814,6 +4834,7 @@ export default class Meeting extends StatelessWebexPlugin {
       await this.unpublishStream(MediaType.VideoMain, oldStream);
     }
     await this.publishStream(MediaType.VideoMain, this.mediaProperties.videoStream);
+    await this.applyResolutionBasedBitrate(MediaType.VideoMain);
   }
 
   /**
@@ -4853,6 +4874,7 @@ export default class Meeting extends StatelessWebexPlugin {
       await this.unpublishStream(MediaType.VideoSlides, oldStream);
     }
     await this.publishStream(MediaType.VideoSlides, this.mediaProperties.shareVideoStream);
+    await this.applyResolutionBasedBitrate(MediaType.VideoSlides);
   }
 
   /**
@@ -9575,6 +9597,148 @@ export default class Meeting extends StatelessWebexPlugin {
         'maxplaybackrate',
       ]);
     }
+  }
+
+  /**
+   * Estimates a bitrate cap (bits per second) from capture resolution, frame rate, and a bits-per-pixel ratio.
+   *
+   * @returns {number | undefined} - calculated bitrate or undefined if inputs are incomplete
+   */
+  private static calculateResolutionBasedBitrate({
+    width,
+    height,
+    frameRate,
+    bitsPerPixel,
+    capBps,
+  }: {
+    width?: number;
+    height?: number;
+    frameRate?: number;
+    bitsPerPixel: number;
+    capBps: number;
+  }): number | undefined {
+    if (!width || !height) {
+      return undefined;
+    }
+
+    const fps = frameRate || 30;
+
+    if (!fps) {
+      return undefined;
+    }
+
+    const estimated = width * height * fps * bitsPerPixel;
+
+    if (!Number.isFinite(estimated) || estimated <= 0) {
+      return undefined;
+    }
+
+    return Math.min(Math.round(estimated), capBps);
+  }
+
+  /**
+   * Applies a resolution-based bitrate limit to the specified outbound media.
+   *
+   * @param {MediaType} mediaType - outbound media type to adjust
+   * @returns {Promise<void>}
+   */
+  private async applyResolutionBasedBitrate(mediaType: MediaType): Promise<void> {
+    if (this.isMultistream || !this.mediaProperties?.webrtcMediaConnection) {
+      return;
+    }
+
+    const stream =
+      mediaType === MediaType.VideoSlides
+        ? this.mediaProperties.shareVideoStream
+        : this.mediaProperties.videoStream;
+
+    const track = stream?.outputStream?.getVideoTracks?.()[0];
+
+    if (!track || typeof track.getSettings !== 'function') {
+      return;
+    }
+
+    const settings = track.getSettings();
+    const meetingConfig = StaticConfig.meetings || {};
+    const {width, height, frameRate} = settings;
+
+    const defaults =
+      mediaType === MediaType.VideoSlides
+        ? {
+            bitsPerPixel: SHARE_RESOLUTION_BITS_PER_PIXEL,
+            capBps: SHARE_RESOLUTION_MAX_BPS,
+            configuredCapKbps: meetingConfig.maxScreenShareVideoBitrateKbps,
+          }
+        : {
+            bitsPerPixel: CAMERA_RESOLUTION_BITS_PER_PIXEL,
+            capBps: CAMERA_RESOLUTION_MAX_BPS,
+            configuredCapKbps: meetingConfig.maxVideoBitrateKbps,
+          };
+
+    let targetBitrate = Meeting.calculateResolutionBasedBitrate({
+      width,
+      height,
+      frameRate,
+      bitsPerPixel: defaults.bitsPerPixel,
+      capBps: defaults.capBps,
+    });
+
+    const configuredCapBps =
+      typeof defaults.configuredCapKbps === 'number' && defaults.configuredCapKbps > 0
+        ? defaults.configuredCapKbps * 1000
+        : undefined;
+
+    if (configuredCapBps) {
+      targetBitrate = targetBitrate ? Math.min(targetBitrate, configuredCapBps) : configuredCapBps;
+    }
+
+    if (!targetBitrate) {
+      return;
+    }
+
+    if (mediaType === MediaType.VideoSlides) {
+      await this.setScreenShareVideoMaxBitrate(targetBitrate);
+    } else {
+      await this.setVideoMaxBitrate(targetBitrate);
+    }
+  }
+
+  /**
+   * Applies a hard ceiling to the main camera video encoder for transcoded meetings.
+   *
+   * @param {number} maxBitrate - maximum bits per second for the outbound camera stream
+   * @returns {Promise<void>}
+   */
+  public async setVideoMaxBitrate(maxBitrate: number): Promise<void> {
+    const LOG_HEADER = 'Meeting:index#setVideoMaxBitrate --> ';
+    const mediaConnection = this.mediaProperties?.webrtcMediaConnection;
+
+    if (!mediaConnection?.setVideoMaxBitrate) {
+      LoggerProxy.logger.warn(`${LOG_HEADER}media connection not ready or unsupported`);
+
+      return;
+    }
+
+    await mediaConnection.setVideoMaxBitrate(maxBitrate);
+  }
+
+  /**
+   * Applies a hard ceiling to the screen share video encoder for transcoded meetings.
+   *
+   * @param {number} maxBitrate - maximum bits per second for the outbound screen share stream
+   * @returns {Promise<void>}
+   */
+  public async setScreenShareVideoMaxBitrate(maxBitrate: number): Promise<void> {
+    const LOG_HEADER = 'Meeting:index#setScreenShareVideoMaxBitrate --> ';
+    const mediaConnection = this.mediaProperties?.webrtcMediaConnection;
+
+    if (!mediaConnection?.setScreenShareVideoMaxBitrate) {
+      LoggerProxy.logger.warn(`${LOG_HEADER}media connection not ready or unsupported`);
+
+      return;
+    }
+
+    await mediaConnection.setScreenShareVideoMaxBitrate(maxBitrate);
   }
 
   /** Updates the tracks being sent on the transcoded media connection

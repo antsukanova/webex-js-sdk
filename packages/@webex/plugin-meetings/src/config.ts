@@ -72,6 +72,9 @@ export default {
       video: 4000000,
       startBitrate: 2000,
     },
+    // Optional runtime bitrate caps (kilobits per second) for transcoded connections.
+    maxVideoBitrateKbps: undefined,
+    maxScreenShareVideoBitrateKbps: undefined,
     screenFrameRate: 10,
     videoShareFrameRate: 30,
     aspectRatio: 1.7695852534562213,

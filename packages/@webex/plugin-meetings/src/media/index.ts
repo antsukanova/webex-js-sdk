@@ -235,6 +235,8 @@ Media.createMediaConnection = (
         disableExtmap: !enableExtmap,
         disableRtx: !enableRtx, // see https://bugs.chromium.org/p/chromium/issues/detail?id=1020642 why we might want to remove RTX from SDP
       },
+      maxVideoBitrateKbps: StaticConfig.meetings.maxVideoBitrateKbps,
+      maxScreenShareVideoBitrateKbps: StaticConfig.meetings.maxScreenShareVideoBitrateKbps,
     },
     {
       // TODO: RoapMediaConnection is not ready to use stream classes yet, so we pass the raw MediaStreamTrack for now SPARK-460530
