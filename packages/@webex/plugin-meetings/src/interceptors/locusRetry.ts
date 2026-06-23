@@ -47,7 +47,7 @@ export default class LocusRetryStatusInterceptor extends Interceptor {
 
     if ((reason.statusCode === 503 || reason.statusCode === 429) && options.uri.includes('locus')) {
       const hasRetriedLocusRequest = rateLimitExpiryTime.get(this);
-      const retryAfterTime: number = options.headers['retry-after'] || 2000;
+      const retryAfterTime = (options.headers['retry-after'] as number) || 2000;
 
       if (hasRetriedLocusRequest) {
         rateLimitExpiryTime.set(this, false);
