@@ -35,7 +35,7 @@ export default class LocusRetryStatusInterceptor extends Interceptor {
     }
   }
 
-  onResponseError(options, reason) {
+  onResponseError(options: any, reason: any): Promise<void> {
     // Don't retry /hashtree or /sync calls for 429 or any 5xx — during a sync storm retries
     // make things worse. The normal sync timers will handle recovery for these endpoints.
     if (
@@ -47,7 +47,7 @@ export default class LocusRetryStatusInterceptor extends Interceptor {
 
     if ((reason.statusCode === 503 || reason.statusCode === 429) && options.uri.includes('locus')) {
       const hasRetriedLocusRequest = rateLimitExpiryTime.get(this);
-      const retryAfterTime = options.headers['retry-after'] || 2000;
+      const retryAfterTime: number = options.headers['retry-after'] || 2000;
 
       if (hasRetriedLocusRequest) {
         rateLimitExpiryTime.set(this, false);
@@ -65,10 +65,10 @@ export default class LocusRetryStatusInterceptor extends Interceptor {
   /**
    * Handle retries for locus service unavailable errors
    * @param {Object} options associated with the request
-   * @param {number} retryAfterTime retry after time in milliseconds
+   * @param {number} retryAfterTime retry after time in seconds
    * @returns {Promise}
    */
-  handleRetryRequestLocusServiceError(options, retryAfterTime) {
+  async handleRetryRequestLocusServiceError(options, retryAfterTime) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         clearTimeout(timeout);
