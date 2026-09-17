@@ -1,12 +1,16 @@
 /* globals window */
 
+import {CapabilityState, WebCapabilities} from '@webex/web-capabilities';
 import {
+  _CALL_,
   _CREATED_,
   _INCOMING_,
   _JOINED_,
   _LEFT_,
   DESTINATION_TYPE,
   _MOVED_,
+  _SIP_BRIDGE_,
+  _SPACE_SHARE_,
   BREAKOUTS,
   EVENT_TRIGGERS,
   LOCUS,
@@ -184,20 +188,36 @@ MeetingsUtil.getSiteName = (site: string, multipartSitePrefixList: string[] = []
  * @returns {Promise<boolean>}
  */
 MeetingsUtil.hasH264Codec = async () => {
+  try {
+    const codecCapability = WebCapabilities.isCapableOfReceivingVideoCodec('video/H264');
+
+    if (codecCapability === CapabilityState.CAPABLE) {
+      return true;
+    }
+
+    if (codecCapability === CapabilityState.NOT_CAPABLE) {
+      return false;
+    }
+  } catch (_) {
+    // NO-OP
+  }
+
   let hasCodec = false;
 
+  let pc;
   try {
-    const pc = new window.RTCPeerConnection();
+    pc = new window.RTCPeerConnection();
     const offer = await pc.createOffer({offerToReceiveVideo: true});
 
-    if (offer.sdp.match(/^a=rtpmap:\d+\s+H264\/\d+/m)) {
+    if (offer.sdp?.match(/^a=rtpmap:\d+\s+H264\/\d+/m)) {
       hasCodec = true;
     }
-    pc.close();
   } catch (error) {
     LoggerProxy.logger.warn(
       'Meetings:util#hasH264Codec --> Error creating peerConnection for H.264 test.'
     );
+  } finally {
+    pc?.close();
   }
 
   return hasCodec;
@@ -318,6 +338,20 @@ MeetingsUtil.isSelfMovedOrBreakoutEnded = (locus: any): boolean => {
     locus?.fullState?.endMeetingReason === EndMeetingReason.breakoutEnded;
 
   return isSelfLeftMoved || isBreakoutEnded;
+};
+
+/**
+ * Checks if a locus is a 1:1 call using locus.fullState.type.
+ * Returns true when fullState.type is CALL, SIP_BRIDGE, or SPACE_SHARE.
+ * @param {Object} locus locus data
+ * @returns {boolean}
+ */
+MeetingsUtil.isOneOnOneCall = (locus: any): boolean => {
+  const fullStateType = locus?.fullState?.type;
+
+  return (
+    fullStateType === _CALL_ || fullStateType === _SIP_BRIDGE_ || fullStateType === _SPACE_SHARE_
+  );
 };
 
 /**

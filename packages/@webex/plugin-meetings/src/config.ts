@@ -87,13 +87,12 @@ export default {
       enableMediaNegotiatedEvent: false,
       enableUnifiedMeetings: true,
       enableAdhocMeetings: true,
-      enableTcpReachability: false,
-      enableTlsReachability: false,
       storeLocusHashTreeEventsForDebugging: false,
     },
     degradationPreferences: {
       maxMacroblocksLimit: 8192,
     },
+    enableAv1SlidesSupport: false,
     // This only applies to non-multistream meetings
     iceCandidatesGatheringTimeout: undefined,
     backendIpv6NativeSupport: false,

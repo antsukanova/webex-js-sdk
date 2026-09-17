@@ -3,6 +3,8 @@ import AmpState from 'ampersand-state';
 import {union} from 'lodash';
 import ServiceDetail from './service-detail';
 import {IServiceDetail, ServiceGroup} from './types';
+import {matchAllowedDomain, normalizeAllowedDomains} from '../domains';
+import {matchesCatalogUrl} from '../services/service-catalog';
 
 /**
  * @class
@@ -200,7 +202,7 @@ const ServiceCatalog = AmpState.extend({
 
     return serviceDetails.find(({serviceUrls}) => {
       for (const serviceUrl of serviceUrls) {
-        if (url.startsWith(serviceUrl.baseUrl)) {
+        if (matchesCatalogUrl(url, serviceUrl.baseUrl)) {
           return true;
         }
       }
@@ -210,20 +212,14 @@ const ServiceCatalog = AmpState.extend({
   },
 
   /**
-   * Finds an allowed domain that matches a specific url.
+   * Finds an allowed domain that matches a specific url. The url's hostname
+   * must be the allowed domain itself or a subdomain of it.
    *
    * @param {string} url - The url to match the allowed domains against.
    * @returns {string} - The matching allowed domain.
    */
   findAllowedDomain(url: string): string {
-    try {
-      const urlObj = new URL(url);
-
-      return this.allowedDomains.find((allowedDomain) => urlObj.host.includes(allowedDomain));
-    } catch {
-      // If the URL is invalid or can't be found, return undefined
-      return undefined;
-    }
+    return matchAllowedDomain(url, this.allowedDomains);
   },
 
   /**
@@ -282,7 +278,7 @@ const ServiceCatalog = AmpState.extend({
    * @returns {void}
    */
   setAllowedDomains(allowedDomains: Array<string>): void {
-    this.allowedDomains = [...allowedDomains];
+    this.allowedDomains = normalizeAllowedDomains(allowedDomains);
   },
 
   /**
@@ -291,7 +287,7 @@ const ServiceCatalog = AmpState.extend({
    * @returns {void}
    */
   addAllowedDomains(newAllowedDomains: Array<string>): void {
-    this.allowedDomains = union(this.allowedDomains, newAllowedDomains);
+    this.allowedDomains = union(this.allowedDomains, normalizeAllowedDomains(newAllowedDomains));
   },
 
   /**
